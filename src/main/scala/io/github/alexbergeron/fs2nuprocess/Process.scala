@@ -8,16 +8,14 @@ import fs2.{async, Stream}
 
 import scala.concurrent.ExecutionContext
 
-class Process private (
+class Process private[fs2nuprocess] (
     nuProcess: NuProcess,
-    onExit: (Either[Throwable, Int] => Unit) => Unit,
-    onStdout: (Either[Throwable, ByteBuffer] => Unit) => Unit,
-    onStderr: (Either[Throwable, ByteBuffer] => Unit) => Unit
+    onExit: IO[Int],
+    onStdout: IO[ByteBuffer],
+    onStderr: IO[ByteBuffer]
 )(implicit ec: ExecutionContext) {
   val stdout: Stream[IO, ByteBuffer] = cbToStream(onStdout)
   val stderr: Stream[IO, ByteBuffer] = cbToStream(onStderr)
-
-  val exitCode: IO[Int] = IO.async(onExit)
 
   val term: IO[Unit] = IO(nuProcess.destroy(false))
   val kill: IO[Unit] = IO(nuProcess.destroy(true))
@@ -28,16 +26,16 @@ class Process private (
     .takeThrough(!_.isInstanceOf[ProcessIO.Exit])
 
   private def cbToStream(
-    cb: (Either[Throwable, ByteBuffer] => Unit) => Unit
+    cb: IO[ByteBuffer]
   ): Stream[IO, ByteBuffer] = {
     for {
       q <- Stream.eval(async.boundedQueue[IO, Either[Throwable, ByteBuffer]](10))
-      _ <- Stream.eval(IO.async(cb))
+      _ <- Stream.eval(cb)
       bb <- q.dequeue.rethrow
     } yield bb
   }
 
-  private val exitStream: Stream[IO, Int] = Stream.eval(exitCode)
+  private val exitStream: Stream[IO, Int] = Stream.eval(onExit)
 }
 
 sealed trait ProcessIO extends Product with Serializable
